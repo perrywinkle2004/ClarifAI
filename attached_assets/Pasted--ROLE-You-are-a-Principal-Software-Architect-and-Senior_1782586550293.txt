@@ -1,0 +1,377 @@
+# ROLE
+
+You are a Principal Software Architect and Senior Full Stack AI Engineer with expertise in FastAPI, React, TypeScript, Streamlit, LangChain, ChromaDB, Ollama, HuggingFace, RAG systems, modern UI/UX, Docker, and deployment.
+
+You are NOT a code generator that produces partial implementations.
+
+You must think like an architect, design the entire application first, then implement every component professionally.
+
+Do NOT leave placeholders, TODOs, mock implementations, or unfinished features.
+
+The project must be production-quality, portfolio-worthy, deployment-ready, and suitable for a professional internship submission.
+
+---
+
+# PROJECT TITLE
+
+ClarifAI – Your Personal AI Learning Companion
+
+Tagline:
+
+Upload • Learn • Master
+
+---
+
+# PROJECT DESCRIPTION
+
+Build a complete AI-powered tutoring platform using Retrieval-Augmented Generation (RAG).
+
+Traditional learning platforms provide static information.
+
+ClarifAI should simulate a personalized AI tutor that teaches students using ONLY the uploaded educational material instead of hallucinating answers.
+
+The platform must support document uploads, semantic search, conversational tutoring, adaptive quizzes, flashcards, analytics, and learning progress.
+
+The AI must NEVER answer outside the uploaded documents.
+
+If the answer cannot be found, it should politely state that the information is unavailable in the uploaded study material.
+
+---
+
+# PRIMARY GOAL
+
+Develop a modern AI tutoring platform capable of
+
+• Uploading educational PDFs, DOCX and TXT files
+
+• Converting them into embeddings
+
+• Storing embeddings inside ChromaDB
+
+• Performing semantic search
+
+• Retrieving relevant context
+
+• Generating accurate responses using a local LLM
+
+• Maintaining conversational memory
+
+• Generating quizzes
+
+• Creating flashcards
+
+• Providing analytics for educators
+
+---
+
+# IMPORTANT REQUIREMENTS
+
+The project MUST satisfy the internship requirements while replacing all paid APIs with free alternatives.
+
+Replace
+
+OpenAI Embeddings → HuggingFace Embeddings
+
+OpenAI LLM → Ollama
+
+Pinecone → ChromaDB
+
+NO paid APIs.
+
+NO API keys required.
+
+The project must work locally.
+
+---
+
+# TECH STACK
+
+Backend
+
+Python
+
+FastAPI
+
+Pydantic
+
+Uvicorn
+
+LangChain
+
+ChromaDB
+
+HuggingFace Embeddings
+
+Ollama
+
+Sentence Transformers
+
+PyPDF
+
+Docx parser
+
+SQLite
+
+Frontend
+
+React 19
+
+TypeScript
+
+Vite
+
+TailwindCSS
+
+shadcn/ui
+
+Framer Motion
+
+React Router
+
+React Query
+
+Lucide Icons
+
+Recharts
+
+React Hook Form
+
+Zod
+
+Demo
+
+Streamlit
+
+---
+
+# UI REQUIREMENTS
+
+The UI should look like a modern SaaS application inspired by
+
+ChatGPT
+
+Perplexity
+
+Notion AI
+
+Linear
+
+Vercel Dashboard
+
+Use
+
+Glassmorphism
+
+Beautiful gradients
+
+Rounded cards
+
+Smooth animations
+
+Professional spacing
+
+Modern typography
+
+Interactive charts
+
+Skeleton loading
+
+Animated buttons
+
+Hover animations
+
+Professional icons
+
+Toast notifications
+
+Responsive layout
+
+Dark mode
+
+Light mode
+
+Theme switching
+
+Persist theme selection using local storage.
+
+---
+
+# PAGES
+
+Landing Page
+
+Login
+
+Student Dashboard
+
+Admin Dashboard
+
+Chat Interface
+
+Upload Documents
+
+Quiz Generator
+
+Flashcards
+
+Learning Progress
+
+Analytics Dashboard
+
+Profile
+
+Settings
+
+About
+
+404 Page
+
+---
+
+# STUDENT FEATURES
+
+Upload notes
+
+View uploaded notes
+
+AI Chat
+
+Conversation history
+
+Topic summaries
+
+Flashcards
+
+Adaptive quizzes
+
+Progress tracking
+
+Recent activity
+
+Learning streak
+
+Download chat
+
+Export quizzes
+
+Search conversations
+
+---
+
+# ADMIN FEATURES
+
+Upload syllabus
+
+Delete documents
+
+Rebuild vector database
+
+Analytics dashboard
+
+Most searched topics
+
+Response time
+
+Question count
+
+Document management
+
+System logs
+
+---
+
+# AI FEATURES
+
+RAG pipeline
+
+Semantic search
+
+Conversation memory
+
+Streaming responses
+
+Markdown rendering
+
+Syntax highlighting
+
+Source citations
+
+PDF page references
+
+Flashcards
+
+Quiz generation
+
+Topic summaries
+
+Strict grounding to retrieved context
+
+No hallucinations
+
+---
+
+# DEPLOYMENT
+
+Frontend deployable to Vercel
+
+Backend deployable to Render
+
+Streamlit deployable to Streamlit Community Cloud
+
+Provide Dockerfile
+
+docker-compose.yml
+
+README.md
+
+.env.example
+
+.gitignore
+
+requirements.txt
+
+package.json
+
+---
+
+# CODE QUALITY
+
+Use professional architecture.
+
+Use clean folder structure.
+
+Write modular code.
+
+Use reusable components.
+
+Use proper logging.
+
+Proper exception handling.
+
+Type hints.
+
+Docstrings.
+
+Comments only where useful.
+
+Follow best coding practices.
+
+---
+
+# FINAL REQUIREMENT
+
+Generate the COMPLETE project from scratch inside the current repository.
+
+Do NOT stop halfway.
+
+Do NOT summarize.
+
+Do NOT ask for confirmation.
+
+Continue implementing until every required feature is completed.
+
+Fix build errors automatically.
+
+Ensure backend, frontend, and Streamlit applications run successfully before finishing.
+
+Generate all files, folders, documentation, configuration files, Docker setup, deployment instructions, and production-ready code.
