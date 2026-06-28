@@ -1,15 +1,16 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { documentsTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { documentsTable, documentChunksTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { embed, chunkText } from "../lib/ollama";
 
 const router = Router();
 
 router.get("/", async (req, res) => {
   const userId = 1;
   const docs = await db.select().from(documentsTable).where(eq(documentsTable.userId, userId));
-  const result = docs.map((d) => ({
+  res.json(docs.map((d) => ({
     id: d.id,
     title: d.title,
     filename: d.filename,
@@ -19,25 +20,23 @@ router.get("/", async (req, res) => {
     chunkCount: d.chunkCount,
     topic: d.topic,
     createdAt: d.createdAt.toISOString(),
-  }));
-  res.json(result);
+  })));
 });
 
 router.post("/", async (req, res) => {
   const { title, filename, fileType, fileSize, topic, content } = req.body;
-  const chunkCount = content ? Math.ceil(content.length / 500) : Math.floor(Math.random() * 20) + 5;
   const [doc] = await db.insert(documentsTable).values({
     userId: 1,
     title,
     filename: filename ?? title,
     fileType,
     fileSize: fileSize ?? 0,
-    status: "ready",
-    chunkCount,
+    status: "processing",
+    chunkCount: 0,
     topic: topic ?? null,
     content: content ?? null,
   }).returning();
-  logger.info({ docId: doc.id }, "Document uploaded");
+
   res.status(201).json({
     id: doc.id,
     title: doc.title,
@@ -49,16 +48,57 @@ router.post("/", async (req, res) => {
     topic: doc.topic,
     createdAt: doc.createdAt.toISOString(),
   });
+
+  if (content && content.trim().length > 0) {
+    embedDocumentInBackground(doc.id, content).catch((err) => {
+      logger.error({ err, docId: doc.id }, "Background embedding failed");
+    });
+  } else {
+    await db.update(documentsTable).set({ status: "ready" }).where(eq(documentsTable.id, doc.id));
+  }
 });
+
+async function embedDocumentInBackground(docId: number, content: string) {
+  const chunks = chunkText(content);
+  let embedded = 0;
+
+  for (let i = 0; i < chunks.length; i++) {
+    try {
+      const embedding = await embed(chunks[i]);
+      await db.insert(documentChunksTable).values({
+        documentId: docId,
+        chunkIndex: i,
+        content: chunks[i],
+        embedding: JSON.stringify(embedding),
+      });
+      embedded++;
+    } catch {
+      await db.insert(documentChunksTable).values({
+        documentId: docId,
+        chunkIndex: i,
+        content: chunks[i],
+        embedding: null,
+      });
+    }
+  }
+
+  await db.update(documentsTable).set({
+    status: "ready",
+    chunkCount: chunks.length,
+  }).where(eq(documentsTable.id, docId));
+
+  logger.info({ docId, chunks: chunks.length, embedded }, "Document embedded");
+}
 
 router.get("/stats", async (_req, res) => {
   const docs = await db.select().from(documentsTable).where(eq(documentsTable.userId, 1));
-  const total = docs.length;
-  const ready = docs.filter((d) => d.status === "ready").length;
-  const processing = docs.filter((d) => d.status === "processing").length;
-  const totalChunks = docs.reduce((sum, d) => sum + d.chunkCount, 0);
-  const totalSize = docs.reduce((sum, d) => sum + d.fileSize, 0);
-  res.json({ total, ready, processing, totalChunks, totalSize });
+  res.json({
+    total: docs.length,
+    ready: docs.filter((d) => d.status === "ready").length,
+    processing: docs.filter((d) => d.status === "processing").length,
+    totalChunks: docs.reduce((s, d) => s + d.chunkCount, 0),
+    totalSize: docs.reduce((s, d) => s + d.fileSize, 0),
+  });
 });
 
 router.get("/:id", async (req, res) => {
@@ -80,6 +120,7 @@ router.get("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
+  await db.delete(documentChunksTable).where(eq(documentChunksTable.documentId, id));
   await db.delete(documentsTable).where(eq(documentsTable.id, id));
   res.status(204).send();
 });
