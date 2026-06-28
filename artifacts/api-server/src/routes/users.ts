@@ -6,123 +6,75 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 
-const DEFAULT_USER = {
-  id: 1,
-  name: "Alex Chen",
-  email: "alex@clarifai.app",
-  role: "student" as const,
-  avatar: null,
-  bio: "Passionate about learning and AI-powered education",
-  institution: "State University",
-  joinedAt: new Date("2024-01-15").toISOString(),
-};
-
-async function getOrCreateUser() {
+async function ensureDefaultUser() {
   const existing = await db.select().from(usersTable).where(eq(usersTable.id, 1));
   if (existing.length > 0) return existing[0];
   const [user] = await db.insert(usersTable).values({
-    name: DEFAULT_USER.name,
-    email: DEFAULT_USER.email,
-    passwordHash: "demo_hash",
+    name: "Student",
+    email: "student@clarifai.app",
+    passwordHash: "",
     role: "student",
-    bio: DEFAULT_USER.bio,
-    institution: DEFAULT_USER.institution,
+    bio: null,
+    institution: null,
   }).returning();
   return user;
 }
 
+function formatUser(u: typeof usersTable.$inferSelect) {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: u.role,
+    avatar: u.avatar,
+    bio: u.bio,
+    institution: u.institution,
+    joinedAt: u.createdAt.toISOString(),
+  };
+}
+
 router.get("/profile", async (_req, res) => {
-  const user = await getOrCreateUser();
-  res.json({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    avatar: user.avatar,
-    bio: user.bio,
-    institution: user.institution,
-    joinedAt: user.createdAt.toISOString(),
-  });
+  const user = await ensureDefaultUser();
+  res.json(formatUser(user));
 });
 
 router.patch("/profile", async (req, res) => {
   const { name, bio, institution } = req.body;
-  await getOrCreateUser();
+  await ensureDefaultUser();
   const updates: Partial<typeof usersTable.$inferInsert> = {};
   if (name !== undefined) updates.name = name;
   if (bio !== undefined) updates.bio = bio;
   if (institution !== undefined) updates.institution = institution;
   const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, 1)).returning();
-  res.json({
-    id: updated.id,
-    name: updated.name,
-    email: updated.email,
-    role: updated.role,
-    avatar: updated.avatar,
-    bio: updated.bio,
-    institution: updated.institution,
-    joinedAt: updated.createdAt.toISOString(),
-  });
+  res.json(formatUser(updated));
 });
 
 router.post("/login", async (req, res) => {
-  const { email, password } = req.body;
-  logger.info({ email }, "Login attempt");
-  const user = await getOrCreateUser();
-  res.json({
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      avatar: user.avatar,
-      bio: user.bio,
-      institution: user.institution,
-      joinedAt: user.createdAt.toISOString(),
-    },
-    token: `demo_token_${Date.now()}`,
-  });
+  const { email } = req.body;
+  logger.info({ email }, "Login");
+  const existing = await db.select().from(usersTable).where(eq(usersTable.email, email));
+  if (existing.length > 0) {
+    return res.json({ user: formatUser(existing[0]), token: `token_${existing[0].id}_${Date.now()}` });
+  }
+  const user = await ensureDefaultUser();
+  res.json({ user: formatUser(user), token: `token_${user.id}_${Date.now()}` });
 });
 
 router.post("/register", async (req, res) => {
-  const { name, email, password, role } = req.body;
+  const { name, email, role } = req.body;
+  if (!email) return res.status(400).json({ error: "Email required" });
   const existing = await db.select().from(usersTable).where(eq(usersTable.email, email));
   if (existing.length > 0) {
-    const u = existing[0];
-    return res.json({
-      user: {
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        role: u.role,
-        avatar: u.avatar,
-        bio: u.bio,
-        institution: u.institution,
-        joinedAt: u.createdAt.toISOString(),
-      },
-      token: `demo_token_${Date.now()}`,
-    });
+    return res.json({ user: formatUser(existing[0]), token: `token_${existing[0].id}_${Date.now()}` });
   }
   const [user] = await db.insert(usersTable).values({
-    name,
+    name: name ?? "Student",
     email,
-    passwordHash: "demo_hash",
+    passwordHash: "",
     role: role ?? "student",
   }).returning();
   logger.info({ userId: user.id }, "User registered");
-  res.status(201).json({
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      avatar: user.avatar,
-      bio: user.bio,
-      institution: user.institution,
-      joinedAt: user.createdAt.toISOString(),
-    },
-    token: `demo_token_${Date.now()}`,
-  });
+  res.status(201).json({ user: formatUser(user), token: `token_${user.id}_${Date.now()}` });
 });
 
 export default router;

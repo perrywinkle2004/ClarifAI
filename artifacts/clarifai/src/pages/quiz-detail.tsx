@@ -127,7 +127,7 @@ export default function QuizDetail() {
             {[
               { label: "Questions", value: quiz.questions.length },
               { label: "Difficulty", value: quiz.difficulty },
-              { label: "Best score", value: quiz.bestScore !== null ? `${Math.round(quiz.bestScore)}%` : "—" },
+              { label: "Best score", value: (quiz as any).bestScore != null ? `${Math.round((quiz as any).bestScore)}%` : "—" },
             ].map((s) => (
               <div key={s.label} className="bg-muted rounded-lg p-3">
                 <div className="font-bold capitalize">{s.value}</div>

@@ -1,61 +1,43 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { quizzesTable, quizQuestionsTable, quizAttemptsTable } from "@workspace/db";
+import { quizzesTable, quizQuestionsTable, quizAttemptsTable, documentChunksTable, documentsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { ollamaChat } from "../lib/ollama";
 
 const router = Router();
 
-const SAMPLE_QUESTIONS = [
-  {
-    question: "What is the primary function of mitochondria in a cell?",
-    options: ["Protein synthesis", "Energy production (ATP)", "Cell division", "DNA replication"],
-    correctAnswer: 1,
-    explanation: "Mitochondria are known as the powerhouse of the cell because they generate most of the cell's supply of ATP, which is used as a source of chemical energy.",
-  },
-  {
-    question: "Which process converts glucose into pyruvate?",
-    options: ["Photosynthesis", "Krebs cycle", "Glycolysis", "Oxidative phosphorylation"],
-    correctAnswer: 2,
-    explanation: "Glycolysis is the metabolic pathway that converts glucose into pyruvate, occurring in the cytoplasm of cells.",
-  },
-  {
-    question: "What is the role of ribosomes in protein synthesis?",
-    options: ["DNA transcription", "mRNA translation", "Protein degradation", "Amino acid synthesis"],
-    correctAnswer: 1,
-    explanation: "Ribosomes are cellular structures where mRNA is translated into protein sequences, making them essential for protein synthesis.",
-  },
-  {
-    question: "Which type of bond holds complementary DNA strands together?",
-    options: ["Covalent bonds", "Ionic bonds", "Hydrogen bonds", "Peptide bonds"],
-    correctAnswer: 2,
-    explanation: "The two complementary strands of DNA are held together by hydrogen bonds between complementary base pairs (A-T and G-C).",
-  },
-  {
-    question: "What is osmosis?",
-    options: ["Movement of solutes across membranes", "Movement of water across semi-permeable membranes", "Active transport of ions", "Facilitated diffusion of glucose"],
-    correctAnswer: 1,
-    explanation: "Osmosis is the spontaneous net movement of water molecules through a semi-permeable membrane from a region of lower solute concentration to higher solute concentration.",
-  },
-  {
-    question: "What is the Central Dogma of molecular biology?",
-    options: ["Protein → RNA → DNA", "DNA → RNA → Protein", "RNA → DNA → Protein", "DNA → Protein → RNA"],
-    correctAnswer: 1,
-    explanation: "The Central Dogma states that genetic information flows from DNA to RNA (transcription) to protein (translation).",
-  },
-  {
-    question: "What is the purpose of the cell membrane?",
-    options: ["Energy production", "Protein synthesis", "Regulating what enters and exits the cell", "DNA storage"],
-    correctAnswer: 2,
-    explanation: "The cell membrane (plasma membrane) controls the movement of substances in and out of the cell, maintaining homeostasis.",
-  },
-  {
-    question: "Which organelle is responsible for photosynthesis?",
-    options: ["Mitochondria", "Nucleus", "Chloroplast", "Ribosome"],
-    correctAnswer: 2,
-    explanation: "Chloroplasts are the organelles in plant cells where photosynthesis occurs, converting light energy into chemical energy stored in glucose.",
-  },
-];
+interface QuizQuestion {
+  question: string;
+  options: string[];
+  correctAnswer: number;
+  explanation: string;
+}
+
+async function generateQuestionsWithOllama(
+  context: string,
+  count: number,
+  difficulty: string
+): Promise<QuizQuestion[]> {
+  const prompt = `You are an expert quiz creator. Based on the study material below, generate exactly ${count} multiple-choice questions at ${difficulty} difficulty.
+
+IMPORTANT: Respond with ONLY a valid JSON array — no explanation, no markdown, no preamble.
+
+Format:
+[{"question":"...","options":["A","B","C","D"],"correctAnswer":0,"explanation":"..."}]
+- correctAnswer is the 0-based index of the correct option
+- options must have exactly 4 entries
+
+Study material:
+${context}`;
+
+  const raw = await ollamaChat([{ role: "user", content: prompt }]);
+
+  const match = raw.match(/\[[\s\S]*\]/);
+  if (!match) throw new Error("No JSON array in Ollama response");
+  const parsed = JSON.parse(match[0]) as QuizQuestion[];
+  return parsed.filter((q) => q.question && Array.isArray(q.options) && q.options.length === 4);
+}
 
 router.get("/", async (_req, res) => {
   const quizzes = await db.select().from(quizzesTable).where(eq(quizzesTable.userId, 1)).orderBy(desc(quizzesTable.createdAt));
@@ -74,21 +56,49 @@ router.get("/", async (_req, res) => {
 
 router.post("/", async (req, res) => {
   const { title, topic, documentId, questionCount = 5, difficulty = "medium" } = req.body;
-  const count = Math.min(questionCount, SAMPLE_QUESTIONS.length);
-  
+
+  if (!documentId) {
+    return res.status(400).json({ error: "A document must be selected to generate quiz questions. Upload a document first and select it here." });
+  }
+
+  const chunks = await db.select().from(documentChunksTable).where(eq(documentChunksTable.documentId, Number(documentId))).limit(8);
+  if (chunks.length === 0) {
+    const [doc] = await db.select().from(documentsTable).where(eq(documentsTable.id, Number(documentId)));
+    if (!doc?.content) {
+      return res.status(400).json({ error: "Document has no content to generate questions from." });
+    }
+    chunks.push({ id: 0, documentId: Number(documentId), chunkIndex: 0, content: doc.content.slice(0, 3000), embedding: null, createdAt: new Date() });
+  }
+
+  const context = chunks.map((c) => c.content).join("\n\n---\n\n").slice(0, 6000);
+  const count = Math.min(Number(questionCount), 20);
+
+  let questions: QuizQuestion[] = [];
+  try {
+    questions = await generateQuestionsWithOllama(context, count, difficulty);
+  } catch (err) {
+    logger.error({ err }, "Ollama quiz generation failed");
+    return res.status(502).json({
+      error: "AI quiz generation failed. Make sure Ollama is running with Gemma installed: ollama pull gemma3",
+    });
+  }
+
+  if (questions.length === 0) {
+    return res.status(502).json({ error: "AI returned no valid questions. Try again or adjust the document content." });
+  }
+
   const [quiz] = await db.insert(quizzesTable).values({
     userId: 1,
     title,
     topic: topic ?? null,
-    documentId: documentId ?? null,
+    documentId: Number(documentId),
     difficulty,
-    questionCount: count,
+    questionCount: questions.length,
     bestScore: null,
     attemptCount: 0,
   }).returning();
 
-  const shuffled = [...SAMPLE_QUESTIONS].sort(() => Math.random() - 0.5).slice(0, count);
-  for (const q of shuffled) {
+  for (const q of questions) {
     await db.insert(quizQuestionsTable).values({
       quizId: quiz.id,
       question: q.question,
@@ -98,7 +108,7 @@ router.post("/", async (req, res) => {
     });
   }
 
-  logger.info({ quizId: quiz.id }, "Quiz generated");
+  logger.info({ quizId: quiz.id, questions: questions.length }, "Quiz generated with Ollama");
   res.status(201).json({
     id: quiz.id,
     title: quiz.title,
@@ -146,42 +156,22 @@ router.delete("/:id", async (req, res) => {
 router.post("/:id/submit", async (req, res) => {
   const quizId = Number(req.params.id);
   const { answers, timeSpent } = req.body;
-
   const questions = await db.select().from(quizQuestionsTable).where(eq(quizQuestionsTable.quizId, quizId));
   let correctCount = 0;
   const questionResults = questions.map((q, i) => {
     const selected = answers[i] ?? -1;
     const isCorrect = selected === q.correctAnswer;
     if (isCorrect) correctCount++;
-    return {
-      questionId: q.id,
-      selectedAnswer: selected,
-      correctAnswer: q.correctAnswer,
-      isCorrect,
-      explanation: q.explanation,
-    };
+    return { questionId: q.id, selectedAnswer: selected, correctAnswer: q.correctAnswer, isCorrect, explanation: q.explanation };
   });
-
   const score = questions.length > 0 ? (correctCount / questions.length) * 100 : 0;
-  const passed = score >= 60;
-
-  await db.insert(quizAttemptsTable).values({
-    quizId,
-    userId: 1,
-    score,
-    correctCount,
-    totalQuestions: questions.length,
-    timeSpent: timeSpent ?? 0,
-    answers: JSON.stringify(answers),
-  });
-
+  await db.insert(quizAttemptsTable).values({ quizId, userId: 1, score, correctCount, totalQuestions: questions.length, timeSpent: timeSpent ?? 0, answers: JSON.stringify(answers) });
   const [quiz] = await db.select().from(quizzesTable).where(eq(quizzesTable.id, quizId));
   if (quiz) {
     const newBest = quiz.bestScore === null ? score : Math.max(quiz.bestScore, score);
     await db.update(quizzesTable).set({ bestScore: newBest, attemptCount: quiz.attemptCount + 1 }).where(eq(quizzesTable.id, quizId));
   }
-
-  res.json({ quizId, score, correctCount, totalQuestions: questions.length, timeSpent: timeSpent ?? 0, passed, questionResults });
+  res.json({ quizId, score, correctCount, totalQuestions: questions.length, timeSpent: timeSpent ?? 0, passed: score >= 60, questionResults });
 });
 
 export default router;

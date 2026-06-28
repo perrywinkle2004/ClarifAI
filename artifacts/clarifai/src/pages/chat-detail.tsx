@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import {
   useGetConversation,
@@ -16,7 +16,7 @@ import type { Message, Source } from "@workspace/api-client-react";
 
 function renderMarkdown(text: string) {
   const lines = text.split("\n");
-  const result: JSX.Element[] = [];
+  const result: React.ReactElement[] = [];
   let key = 0;
   for (const line of lines) {
     if (line.startsWith("**") && line.endsWith("**") && line.length > 4) {
