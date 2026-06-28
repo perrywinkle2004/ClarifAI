@@ -3,34 +3,9 @@ import { db } from "@workspace/db";
 import { conversationsTable, messagesTable, documentsTable, documentChunksTable } from "@workspace/db";
 import { eq, desc, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import { embed, ollamaChat, cosineSimilarity } from "../lib/ollama";
+import { chat, keywordRetrieve } from "../lib/ai";
 
 const router = Router();
-
-async function retrieveRelevantChunks(
-  documentId: number,
-  queryEmbedding: number[],
-  topK = 4
-): Promise<Array<{ content: string; chunkIndex: number; score: number }>> {
-  const chunks = await db
-    .select()
-    .from(documentChunksTable)
-    .where(eq(documentChunksTable.documentId, documentId));
-
-  const scored = chunks
-    .filter((c) => c.embedding !== null)
-    .map((c) => {
-      const emb = JSON.parse(c.embedding!) as number[];
-      return { content: c.content, chunkIndex: c.chunkIndex, score: cosineSimilarity(queryEmbedding, emb) };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
-
-  if (scored.length === 0 && chunks.length > 0) {
-    return chunks.slice(0, topK).map((c) => ({ content: c.content, chunkIndex: c.chunkIndex, score: 0.5 }));
-  }
-  return scored;
-}
 
 async function buildRAGResponse(
   conversationId: number,
@@ -47,26 +22,22 @@ async function buildRAGResponse(
   const chatHistory = history.map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
   if (!documentId) {
-    const content = await ollamaChat(
+    const { content } = await chat(
       [...chatHistory, { role: "user", content: userContent }],
-      "You are ClarifAI, a helpful AI tutor. Answer the student's questions clearly and concisely."
-    ).catch(() => "I'm sorry, I couldn't generate a response. Make sure Ollama is running with Gemma installed (`ollama pull gemma3`).");
+      "You are ClarifAI, a helpful AI tutor. Answer the student's questions clearly and concisely. Use markdown for structure when helpful."
+    );
     return { content, sources: [] };
   }
 
   const [doc] = await db.select().from(documentsTable).where(eq(documentsTable.id, documentId));
   const docTitle = doc?.title ?? "Uploaded document";
 
+  const allChunks = await db.select().from(documentChunksTable).where(eq(documentChunksTable.documentId, documentId));
+  
   let relevantChunks: Array<{ content: string; chunkIndex: number; score: number }> = [];
-  try {
-    const queryEmbedding = await embed(userContent);
-    relevantChunks = await retrieveRelevantChunks(documentId, queryEmbedding);
-  } catch {
-    const allChunks = await db.select().from(documentChunksTable).where(eq(documentChunksTable.documentId, documentId)).limit(4);
-    relevantChunks = allChunks.map((c, i) => ({ content: c.content, chunkIndex: c.chunkIndex, score: 0.5 - i * 0.05 }));
-  }
-
-  if (relevantChunks.length === 0 && doc?.content) {
+  if (allChunks.length > 0) {
+    relevantChunks = keywordRetrieve(allChunks, userContent, 5);
+  } else if (doc?.content) {
     relevantChunks = [{ content: doc.content.slice(0, 2000), chunkIndex: 0, score: 0.5 }];
   }
 
@@ -81,19 +52,19 @@ ${context}
 Instructions:
 - Answer only based on the excerpts above.
 - Be specific, educational, and helpful.
-- If the question cannot be answered from the excerpts, say so and suggest what they might look for.
+- If the question cannot be answered from the excerpts, say so clearly.
 - Use markdown for structure when helpful (bold, bullet points).`;
 
-  const content = await ollamaChat(
+  const { content } = await chat(
     [...chatHistory, { role: "user", content: userContent }],
     systemPrompt
-  ).catch(() => "I'm sorry, I couldn't generate a response. Make sure Ollama is running with Gemma installed (`ollama pull gemma3`).");
+  );
 
-  const sources = relevantChunks.slice(0, 3).map((c, i) => ({
+  const sources = relevantChunks.slice(0, 3).map((c) => ({
     documentTitle: docTitle,
     pageNumber: c.chunkIndex + 1,
     excerpt: c.content.slice(0, 120),
-    relevance: Math.round(c.score * 100) / 100,
+    relevance: Math.round(Math.min(c.score / 10, 1) * 100) / 100,
   }));
 
   return { content, sources };
@@ -197,7 +168,13 @@ router.post("/:id/messages", async (req, res) => {
 
   await db.insert(messagesTable).values({ conversationId, role: "user", content, sources: "[]" });
 
-  const aiResp = await buildRAGResponse(conversationId, conv.documentId, content);
+  let aiResp: { content: string; sources: any[] };
+  try {
+    aiResp = await buildRAGResponse(conversationId, conv.documentId, content);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "AI unavailable";
+    aiResp = { content: `⚠️ ${msg}`, sources: [] };
+  }
 
   const [aiMsg] = await db.insert(messagesTable).values({
     conversationId,
@@ -208,7 +185,7 @@ router.post("/:id/messages", async (req, res) => {
 
   await db.update(conversationsTable).set({ updatedAt: new Date() }).where(eq(conversationsTable.id, conversationId));
 
-  logger.info({ conversationId, documentId: conv.documentId }, "Message sent with RAG");
+  logger.info({ conversationId, documentId: conv.documentId }, "Message sent");
   res.json({
     id: aiMsg.id,
     conversationId: aiMsg.conversationId,

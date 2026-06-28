@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { flashcardSetsTable, flashcardsTable, documentChunksTable, documentsTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import { ollamaChat } from "../lib/ollama";
+import { chat } from "../lib/ai";
 
 const router = Router();
 
@@ -13,23 +13,23 @@ interface Flashcard {
   difficulty: "easy" | "medium" | "hard";
 }
 
-async function generateFlashcardsWithOllama(context: string, count: number): Promise<Flashcard[]> {
+async function generateFlashcards(context: string, count: number): Promise<Flashcard[]> {
   const prompt = `You are an expert educator creating study flashcards. Based on the study material below, generate exactly ${count} flashcards.
 
-IMPORTANT: Respond with ONLY a valid JSON array — no explanation, no markdown, no preamble.
+IMPORTANT: Respond with ONLY a valid JSON array — no explanation, no markdown fences, no preamble.
 
 Format:
 [{"front":"term or question","back":"definition or answer","difficulty":"easy"}]
 - difficulty must be "easy", "medium", or "hard"
-- front should be a concise term, concept, or question
-- back should be a clear, complete explanation
+- front: concise term, concept, or question
+- back: clear, complete explanation
 
 Study material:
 ${context}`;
 
-  const raw = await ollamaChat([{ role: "user", content: prompt }]);
-  const match = raw.match(/\[[\s\S]*\]/);
-  if (!match) throw new Error("No JSON array in Ollama response");
+  const { content } = await chat([{ role: "user", content: prompt }]);
+  const match = content.match(/\[[\s\S]*\]/);
+  if (!match) throw new Error("No JSON array in AI response");
   const parsed = JSON.parse(match[0]) as Flashcard[];
   return parsed.filter((c) => c.front && c.back);
 }
@@ -52,33 +52,31 @@ router.post("/", async (req, res) => {
   const { title, topic, documentId, cardCount = 10 } = req.body;
 
   if (!documentId) {
-    return res.status(400).json({ error: "A document must be selected to generate flashcards. Upload a document first and select it here." });
+    return res.status(400).json({ error: "Select a document first — flashcards are generated from your uploaded study material." });
   }
 
   const chunks = await db.select().from(documentChunksTable).where(eq(documentChunksTable.documentId, Number(documentId))).limit(8);
-  if (chunks.length === 0) {
+  let context = chunks.map((c) => c.content).join("\n\n---\n\n");
+
+  if (!context) {
     const [doc] = await db.select().from(documentsTable).where(eq(documentsTable.id, Number(documentId)));
-    if (!doc?.content) {
-      return res.status(400).json({ error: "Document has no content to generate flashcards from." });
-    }
-    chunks.push({ id: 0, documentId: Number(documentId), chunkIndex: 0, content: doc.content.slice(0, 3000), embedding: null, createdAt: new Date() });
+    if (!doc?.content) return res.status(400).json({ error: "Document has no content." });
+    context = doc.content.slice(0, 6000);
   }
 
-  const context = chunks.map((c) => c.content).join("\n\n---\n\n").slice(0, 6000);
+  context = context.slice(0, 6000);
   const count = Math.min(Number(cardCount), 30);
 
   let cards: Flashcard[] = [];
   try {
-    cards = await generateFlashcardsWithOllama(context, count);
+    cards = await generateFlashcards(context, count);
   } catch (err) {
-    logger.error({ err }, "Ollama flashcard generation failed");
-    return res.status(502).json({
-      error: "AI flashcard generation failed. Make sure Ollama is running with Gemma installed: ollama pull gemma3",
-    });
+    logger.error({ err }, "Flashcard generation failed");
+    return res.status(502).json({ error: "AI flashcard generation failed. Check that GROQ_API_KEY is set or Ollama is running locally." });
   }
 
   if (cards.length === 0) {
-    return res.status(502).json({ error: "AI returned no valid flashcards. Try again or adjust the document content." });
+    return res.status(502).json({ error: "AI returned no valid flashcards. Try again or use a different document." });
   }
 
   const [set] = await db.insert(flashcardSetsTable).values({
@@ -101,7 +99,7 @@ router.post("/", async (req, res) => {
     });
   }
 
-  logger.info({ setId: set.id, cards: cards.length }, "Flashcard set generated with Ollama");
+  logger.info({ setId: set.id, cards: cards.length }, "Flashcard set generated");
   res.status(201).json({
     id: set.id,
     title: set.title,

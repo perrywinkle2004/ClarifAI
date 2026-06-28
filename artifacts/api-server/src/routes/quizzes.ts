@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { quizzesTable, quizQuestionsTable, quizAttemptsTable, documentChunksTable, documentsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import { ollamaChat } from "../lib/ollama";
+import { chat } from "../lib/ai";
 
 const router = Router();
 
@@ -14,14 +14,10 @@ interface QuizQuestion {
   explanation: string;
 }
 
-async function generateQuestionsWithOllama(
-  context: string,
-  count: number,
-  difficulty: string
-): Promise<QuizQuestion[]> {
+async function generateQuestions(context: string, count: number, difficulty: string): Promise<QuizQuestion[]> {
   const prompt = `You are an expert quiz creator. Based on the study material below, generate exactly ${count} multiple-choice questions at ${difficulty} difficulty.
 
-IMPORTANT: Respond with ONLY a valid JSON array — no explanation, no markdown, no preamble.
+IMPORTANT: Respond with ONLY a valid JSON array — no explanation, no markdown fences, no preamble.
 
 Format:
 [{"question":"...","options":["A","B","C","D"],"correctAnswer":0,"explanation":"..."}]
@@ -31,10 +27,9 @@ Format:
 Study material:
 ${context}`;
 
-  const raw = await ollamaChat([{ role: "user", content: prompt }]);
-
-  const match = raw.match(/\[[\s\S]*\]/);
-  if (!match) throw new Error("No JSON array in Ollama response");
+  const { content } = await chat([{ role: "user", content: prompt }]);
+  const match = content.match(/\[[\s\S]*\]/);
+  if (!match) throw new Error("No JSON array in AI response");
   const parsed = JSON.parse(match[0]) as QuizQuestion[];
   return parsed.filter((q) => q.question && Array.isArray(q.options) && q.options.length === 4);
 }
@@ -58,33 +53,31 @@ router.post("/", async (req, res) => {
   const { title, topic, documentId, questionCount = 5, difficulty = "medium" } = req.body;
 
   if (!documentId) {
-    return res.status(400).json({ error: "A document must be selected to generate quiz questions. Upload a document first and select it here." });
+    return res.status(400).json({ error: "Select a document first — quizzes are generated from your uploaded study material." });
   }
 
   const chunks = await db.select().from(documentChunksTable).where(eq(documentChunksTable.documentId, Number(documentId))).limit(8);
-  if (chunks.length === 0) {
+  let context = chunks.map((c) => c.content).join("\n\n---\n\n");
+
+  if (!context) {
     const [doc] = await db.select().from(documentsTable).where(eq(documentsTable.id, Number(documentId)));
-    if (!doc?.content) {
-      return res.status(400).json({ error: "Document has no content to generate questions from." });
-    }
-    chunks.push({ id: 0, documentId: Number(documentId), chunkIndex: 0, content: doc.content.slice(0, 3000), embedding: null, createdAt: new Date() });
+    if (!doc?.content) return res.status(400).json({ error: "Document has no content." });
+    context = doc.content.slice(0, 6000);
   }
 
-  const context = chunks.map((c) => c.content).join("\n\n---\n\n").slice(0, 6000);
+  context = context.slice(0, 6000);
   const count = Math.min(Number(questionCount), 20);
 
   let questions: QuizQuestion[] = [];
   try {
-    questions = await generateQuestionsWithOllama(context, count, difficulty);
+    questions = await generateQuestions(context, count, difficulty);
   } catch (err) {
-    logger.error({ err }, "Ollama quiz generation failed");
-    return res.status(502).json({
-      error: "AI quiz generation failed. Make sure Ollama is running with Gemma installed: ollama pull gemma3",
-    });
+    logger.error({ err }, "Quiz generation failed");
+    return res.status(502).json({ error: "AI quiz generation failed. Check that GROQ_API_KEY is set or Ollama is running locally." });
   }
 
   if (questions.length === 0) {
-    return res.status(502).json({ error: "AI returned no valid questions. Try again or adjust the document content." });
+    return res.status(502).json({ error: "AI returned no valid questions. Try again or use a different document." });
   }
 
   const [quiz] = await db.insert(quizzesTable).values({
@@ -108,7 +101,7 @@ router.post("/", async (req, res) => {
     });
   }
 
-  logger.info({ quizId: quiz.id, questions: questions.length }, "Quiz generated with Ollama");
+  logger.info({ quizId: quiz.id, questions: questions.length }, "Quiz generated");
   res.status(201).json({
     id: quiz.id,
     title: quiz.title,
