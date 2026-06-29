@@ -1,5 +1,7 @@
 <div align="center">
-# 🎓 ClarifAI
+
+ # 🎓 ClarifAI 
+
 ### Your Personal AI Learning Companion
  
 **Upload • Learn • Master**
@@ -24,11 +26,11 @@ Upload a PDF, DOCX, or TXT file, and ClarifAI builds a **Retrieval-Augmented Gen
  
 Everything runs on free, local infrastructure:
  
-| Instead of...        | ClarifAI uses...                                  |
-|-----------------------|----------------------------------------------------|
-| OpenAI Embeddings     | 🤗 HuggingFace `sentence-transformers` (local)     |
+| Instead of...         | ClarifAI uses...                                    |
+|-----------------------|---------------------------------------------------- |
+| OpenAI Embeddings     | ⚡ Groq API `sentence-transformers`                | 
 | OpenAI LLM (GPT-4)    | 🦙 Ollama (local LLM, e.g. Llama 3.1)              |
-| Pinecone              | 🗄️ ChromaDB (local, persistent, on-disk)          |
+| Pinecone              | 🗄️ ChromaDB (local, persistent, on-disk)           |
  
 **No API keys. No usage costs. Runs entirely on your own machine.**
  
